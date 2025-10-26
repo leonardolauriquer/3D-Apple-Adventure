@@ -1,0 +1,5 @@
+{
+  "name": "3D Apple Adventure",
+  "description": "Um mini-jogo de plataforma 3D inspirado em clássicos! Controle o herói com WASD, pule com Espaço e corra pelo mundo para coletar todas as maçãs.",
+  "requestFramePermissions": []
+}
