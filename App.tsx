@@ -24,6 +24,7 @@ const App: React.FC = () => {
     const [isOfflineMode, setIsOfflineMode] = useState(false);
 
     const {
+        isStateLoaded,
         view, setView,
         upgradePoints, setUpgradePoints,
         diamonds, setDiamonds,
@@ -33,9 +34,10 @@ const App: React.FC = () => {
         upgrades, setUpgrades,
         lives, setLives,
         language, setLanguage,
-        dailyRewardStreak, setDailyRewardStreak,
-        lastLoginDate, setLastLoginDate,
-        highestLevel, setHighestLevel
+        dailyRewardStreak,
+        lastLoginDate,
+        highestLevel, setHighestLevel,
+        claimDailyRewardAndUpdateState // Nova função síncrona
     } = useGameState(user, isOfflineMode);
 
     const [isMuted, setIsMuted] = useState(false);
@@ -67,9 +69,11 @@ const App: React.FC = () => {
     }, [setView]);
 
     useEffect(() => {
-        if (!user) return; // Only check daily reward if user is logged in
+        if (!isStateLoaded || (!user && !isOfflineMode)) return;
+        
         const today = new Date().toISOString().split('T')[0];
-        if (lastLoginDate !== today) {
+    
+        if (lastLoginDate !== today && !dailyRewardInfo) {
             const yesterday = new Date();
             yesterday.setDate(yesterday.getDate() - 1);
             const yesterdayStr = yesterday.toISOString().split('T')[0];
@@ -78,20 +82,19 @@ const App: React.FC = () => {
             if (lastLoginDate === yesterdayStr) {
                 newStreak = dailyRewardStreak + 1;
             }
-            setDailyRewardStreak(newStreak);
-            const reward = { type: 'points', amount: 20 }; 
+    
+            const reward = { type: 'points', amount: 20 }; // Recompensa de exemplo
             setDailyRewardInfo({ day: newStreak, amount: reward.amount, type: reward.type as 'points' | 'diamonds' });
         }
-    }, [user, soundsLoaded, dailyRewardStreak, lastLoginDate, setDailyRewardStreak, setLastLoginDate]);
+    }, [isStateLoaded, user, isOfflineMode, lastLoginDate, dailyRewardInfo, dailyRewardStreak]);
 
     const handleClaimReward = () => {
         if (!dailyRewardInfo) return;
-        if (dailyRewardInfo.type === 'points') {
-            setUpgradePoints(p => p + dailyRewardInfo.amount);
-        } else {
-            setDiamonds(d => d + dailyRewardInfo.amount);
-        }
-        setLastLoginDate(new Date().toISOString().split('T')[0]);
+
+        // A nova função manipula a atualização do estado E o salvamento síncrono.
+        claimDailyRewardAndUpdateState(dailyRewardInfo);
+
+        // Após iniciar a atualização do estado, esconda o modal.
         setDailyRewardInfo(null);
     };
 
@@ -156,10 +159,10 @@ const App: React.FC = () => {
         setView('menu');
     };
 
-    if (!soundsLoaded || isAuthLoading) {
+    if (isAuthLoading || !isStateLoaded || !soundsLoaded) {
         return (
             <div className="w-full h-full bg-gray-900 flex justify-center items-center">
-                <h1 className="text-4xl text-white font-bold animate-pulse">{t(isAuthLoading ? 'loading' : 'loadingSounds')}</h1>
+                <h1 className="text-4xl text-white font-bold animate-pulse">{t('loading')}</h1>
             </div>
         );
     }
