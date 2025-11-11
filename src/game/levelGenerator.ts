@@ -239,8 +239,9 @@ export const generateLevelData = (level: number): LevelData => {
         else platformsData.push(commonPlatformData);
     }
 
+    const midPlatformIndex = Math.floor(allPlatformPositions.length / 2);
     allPlatformPositions.forEach((platData, i) => {
-        if (i === 0 || i === allPlatformPositions.length - 1) return;
+        if (i === 0 || i === allPlatformPositions.length - 1 || i === midPlatformIndex) return;
         const { position, width, depth } = platData;
         const occupiedZones: { pos: THREE.Vector2, radius: number }[] = [];
         const isPositionFree = (pos: THREE.Vector2, radius: number) => !occupiedZones.some(zone => pos.distanceTo(zone.pos) < zone.radius + radius);
@@ -268,7 +269,6 @@ export const generateLevelData = (level: number): LevelData => {
         if (i > 5 && !heartSpawned && Math.random() < 0.2) { const pos = tryPlaceObject(1.5, 2.0); if(pos) { hearts3DData.push({ position: pos }); heartSpawned = true; } }
     });
     
-    const midPlatformIndex = Math.floor(allPlatformPositions.length / 2);
     checkpointData = { position: allPlatformPositions[midPlatformIndex].position.clone().add(new THREE.Vector3(0, 0.5, 0)) };
     const lastPlatformPos = allPlatformPositions[allPlatformPositions.length - 1].position;
     endTunnelData = { position: lastPlatformPos.clone().add(new THREE.Vector3(0, 2.5, 0)) };

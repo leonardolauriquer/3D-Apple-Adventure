@@ -1,7 +1,11 @@
+
+
 import React, { useState } from 'react';
 import { Upgrades, CharacterId } from '../../types';
 import { charactersData, UPGRADE_COST_BASE, UPGRADE_COST_MULTIPLIER, MAX_STAT_UPGRADE_LEVEL, MAX_LIVES_UPGRADE_LEVEL, BASE_MAX_LIVES, DOUBLE_JUMP_COST, TRIPLE_JUMP_COST, GROUND_POUND_COST, LEVEL_SKIP_COST, DIAMOND_TO_POINTS_RATIO } from '../../config/constants';
 import { playSound } from '../../utils/audio';
+import { User } from 'firebase/auth';
+import { firebaseEnabled } from '../../config/firebase';
 
 interface MainMenuProps {
     upgradePoints: number; diamonds: number; upgrades: Upgrades;
@@ -17,15 +21,18 @@ interface MainMenuProps {
     t: (key: string, options?: { [key: string]: string | number }) => string;
     onShowWiki: () => void;
     onShowDiamondShop: () => void;
+    onShowRanking: () => void;
     isMuted: boolean;
     onToggleMute: () => void;
+    user: User | null;
+    isOfflineMode: boolean;
 }
 
-export const MainMenu: React.FC<MainMenuProps> = ({ upgradePoints, diamonds, upgrades, characterId, unlockedCharacters, currentLevel, setUpgradePoints, setDiamonds, setUpgrades, setCharacterId, setUnlockedCharacters, setCurrentLevel, onStartGame, t, onShowWiki, onShowDiamondShop, isMuted, onToggleMute }) => {
+export const MainMenu: React.FC<MainMenuProps> = ({ upgradePoints, diamonds, upgrades, characterId, unlockedCharacters, currentLevel, setUpgradePoints, setDiamonds, setUpgrades, setCharacterId, setUnlockedCharacters, setCurrentLevel, onStartGame, t, onShowWiki, onShowDiamondShop, isMuted, onToggleMute, onShowRanking, user, isOfflineMode }) => {
     const [diamondConversionAmount, setDiamondConversionAmount] = useState('');
     const [isShopOpen, setIsShopOpen] = useState(false);
     const [isUpgradesOpen, setIsUpgradesOpen] = useState(false);
-    
+
     const getUpgradeCost = (level: number) => Math.floor(UPGRADE_COST_BASE * Math.pow(UPGRADE_COST_MULTIPLIER, level));
 
     const handleStatUpgrade = (type: 'speed' | 'jump') => {
@@ -84,7 +91,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({ upgradePoints, diamonds, upg
             alert(t('notEnoughDiamonds'));
         }
     };
-    
+
     const conversionAmountNum = parseInt(diamondConversionAmount, 10) || 0;
     const ChevronIcon = ({ isOpen }: { isOpen: boolean }) => (<svg className={`w-6 h-6 transition-transform duration-300 ${isOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>);
 
@@ -110,6 +117,12 @@ export const MainMenu: React.FC<MainMenuProps> = ({ upgradePoints, diamonds, upg
              <div className="w-full max-w-lg bg-white/80 backdrop-blur-md rounded-2xl shadow-xl p-4 sm:p-6 overflow-y-auto max-h-[95vh]">
                  <div className="w-full mx-auto text-center">
                     <h1 className="text-4xl sm:text-5xl font-bold text-red-700 mb-2">{t('mainMenuTitle')}</h1>
+                    {user && (
+                        <div className="flex items-center justify-center gap-2 mb-2 text-gray-700">
+                             <span className="text-lg">{t('welcome')}, <span className="font-bold">{user.displayName}</span>!</span>
+                        </div>
+                    )}
+
                     <div className="flex flex-col sm:flex-row justify-center items-center gap-2 sm:gap-4 text-lg sm:text-xl mb-2 text-gray-700">
                         <p>{t('upgradePoints')}: <span className="font-bold text-purple-600">{upgradePoints}</span></p>
                         <p>{t('diamonds')}: <span className="font-bold text-cyan-600">{diamonds} 💎</span></p>
@@ -118,6 +131,9 @@ export const MainMenu: React.FC<MainMenuProps> = ({ upgradePoints, diamonds, upg
                     
                     <div className="flex flex-col gap-4 mt-6">
                         <button onClick={() => { playSound('menuClick'); onStartGame(); }} className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-8 text-xl rounded-lg shadow-lg transition-transform transform hover:scale-105">{t('startGame')}</button>
+                        {firebaseEnabled && !isOfflineMode && user && (
+                            <button onClick={() => { playSound('menuClick'); onShowRanking(); }} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-8 text-xl rounded-lg shadow-lg transition-transform transform hover:scale-105">{t('ranking.title')}</button>
+                        )}
                         <button onClick={() => { playSound('menuClick'); onShowDiamondShop(); }} className="w-full bg-yellow-500 hover:bg-yellow-600 text-gray-900 font-bold py-3 px-8 text-xl rounded-lg shadow-lg transition-transform transform hover:scale-105">{t('getDiamonds')}</button>
                     </div>
                     
@@ -183,6 +199,12 @@ export const MainMenu: React.FC<MainMenuProps> = ({ upgradePoints, diamonds, upg
                     <div className="mt-8 w-full">
                         <button onClick={() => { playSound('menuClick'); onShowWiki(); }} className="w-full bg-teal-600 hover:bg-teal-700 text-white font-bold py-3 px-8 text-lg rounded-lg shadow-lg transition-transform transform hover:scale-105">Wiki</button>
                     </div>
+
+                    {isOfflineMode && (
+                        <div className="mt-4 p-2 bg-orange-100 border border-orange-300 text-orange-800 rounded-lg text-center text-sm">
+                            <p>{t('offlineModeNotice')}</p>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>

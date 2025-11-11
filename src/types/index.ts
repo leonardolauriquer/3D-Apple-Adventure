@@ -2,7 +2,7 @@ import * as THREE from 'three';
 
 export type Language = 'en' | 'pt' | 'es' | 'fr' | 'de' | 'ja' | 'zh' | 'hi' | 'ar';
 export type GameState = 'playing' | 'gameOver' | 'levelComplete';
-export type View = 'menu' | 'game' | 'levelCompleteScreen' | 'langSelect' | 'wiki' | 'diamondShop' | 'dailyReward';
+export type View = 'menu' | 'game' | 'levelCompleteScreen' | 'langSelect' | 'wiki' | 'diamondShop' | 'dailyReward' | 'ranking';
 export type CharacterId = string;
 
 export interface Upgrades {

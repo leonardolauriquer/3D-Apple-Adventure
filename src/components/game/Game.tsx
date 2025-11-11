@@ -28,6 +28,7 @@ export const Game: React.FC<GameProps> = ({ upgrades, characterId, onSessionEnd,
     const [levelData, setLevelData] = useState<LevelData | null>(null);
     const [isPaused, setIsPaused] = useState(false);
     const [bossHealth, setBossHealth] = useState<{ current: number, max: number } | null>(null);
+    const [restartKey, setRestartKey] = useState(0);
 
     const playerVelocityRef = useRef(new THREE.Vector3());
     const playerRef = useRef<THREE.Mesh | null>(null);
@@ -55,13 +56,14 @@ export const Game: React.FC<GameProps> = ({ upgrades, characterId, onSessionEnd,
     useEffect(() => {
         setIsLoading(true);
         setLevelData(null);
+        setScore(0);
         const generationTimeout = setTimeout(() => {
             const data = generateLevelData(level);
             setLevelData(data);
             setNumApples(data.numApples);
         }, 50);
         return () => clearTimeout(generationTimeout);
-    }, [level]);
+    }, [level, restartKey]);
 
     const handleGiveUp = () => {
         playSound('menuClick');
@@ -77,6 +79,12 @@ export const Game: React.FC<GameProps> = ({ upgrades, characterId, onSessionEnd,
         playSound('menuClick');
         clockRef.current.getDelta();
         setIsPaused(false);
+    };
+
+    const handleRestart = () => {
+        playSound('menuClick');
+        setIsPaused(false);
+        setRestartKey(k => k + 1);
     };
 
     useEffect(() => {
@@ -192,7 +200,7 @@ export const Game: React.FC<GameProps> = ({ upgrades, characterId, onSessionEnd,
             levelData.apples.forEach(d => { const a = createApple(); a.position.copy(d.position); a.userData.id = d.id; scene.add(a); apples.push(a); });
             levelData.dangers.forEach(d => { const danger = createSkull(); danger.position.copy(d.position); danger.userData = { isDying: false, deathTimer: 0, initialPosition: d.position.clone(), patrolAxis: Math.random() < 0.5 ? 'x' : 'z', patrolDistance: d.patrolDistance, patrolSpeed: 0.5 + Math.random() * 0.5 }; scene.add(danger); dangers.push(danger); });
             levelData.ghosts.forEach(d => { const g = createGhost(); g.position.copy(d.position); g.userData = { isChasing: false, chaseSpeed: 0.8 + difficulty * 0.5, activationRadius: 10, initialY: d.initialY }; scene.add(g); ghosts.push(g); });
-            levelData.stompers.forEach(d => { const s = createStomper(textureLoader); s.position.copy(d.position); s.userData = { floorY: d.floorY, speed: 1 + difficulty * 2 }; scene.add(s); stompers.push(s); });
+            levelData.stompers.forEach(d => { const s = createStomper(textureLoader); s.position.copy(d.position); s.userData = { floorY: d.floorY + 1, speed: 1 + difficulty * 2 }; scene.add(s); stompers.push(s); });
             levelData.lasers.forEach(d => { const l = createLaser(); l.position.copy(d.position); l.userData = { ...d, initialPosition: d.position.clone() }; scene.add(l); lasers.push(l); });
             levelData.spikeBlocks.forEach(d => { const s = createSpikeBlock(); s.position.copy(d.position); s.userData = { initialPosition: d.position.clone(), patrolAxis: Math.random() < 0.5 ? 'x' : 'z', patrolDistance: d.patrolDistance, patrolSpeed: 0.4 + Math.random() * 0.4 }; scene.add(s); spikeBlocks.push(s); });
             levelData.ramBots.forEach(d => { const r = createRamBot(); r.position.copy(d.position); r.userData = { state: 'idle', stateTimer: 0, chargeSpeed: 12 + difficulty * 4, ...d }; scene.add(r); ramBots.push(r); });
@@ -426,54 +434,184 @@ export const Game: React.FC<GameProps> = ({ upgrades, characterId, onSessionEnd,
                 else { player.visible = true; }
                 
                 if (gameState === 'playing') {
-                    let isGrounded = false; let highestPlatformY = -Infinity; let onMovingPlatform: THREE.Mesh | null = null;
-                    const allPlatforms = [...platforms, ...movingPlatforms, ...shrinkingPlatforms, ...bouncePads, ...jumpPads];
+                    // --- PLAYER PHYSICS AND COLLISION REFACTOR ---
                     const wasGrounded = jumpCountRef.current === 0;
-                    
+
+                    // 1. UPDATE VERTICAL VELOCITY from forces (gravity, jumps)
+                    playerVelocityRef.current.y -= 9.8 * delta;
+
+                    if (keysRef.current.space && !spacePressedSinceGrounded.current && !isGroundPoundingRef.current) {
+                        let jumped = false;
+                        if (wasGrounded) {
+                            playerVelocityRef.current.y = JUMP_FORCE; jumpCountRef.current = 1; jumped = true;
+                        } else if (jumpCountRef.current === 1 && upgrades.doubleJump) {
+                            playerVelocityRef.current.y = JUMP_FORCE; jumpCountRef.current = 2; jumped = true;
+                        } else if (jumpCountRef.current === 2 && upgrades.tripleJump) {
+                            playerVelocityRef.current.y = JUMP_FORCE; jumpCountRef.current = 3; jumped = true;
+                        }
+                        if (jumped) { playSound('jump', 0.5, 1.0); spacePressedSinceGrounded.current = true; }
+                    }
+                    if (!keysRef.current.space) spacePressedSinceGrounded.current = false;
+
+                    if ((keysRef.current.c || keysRef.current.shift) && !wasGrounded && upgrades.groundPound && !isGroundPoundingRef.current) {
+                        isGroundPoundingRef.current = true; playerVelocityRef.current.y = -25;
+                    }
+
+                    // 2. GET HORIZONTAL MOVEMENT from input
+                    const horizontalMovement = new THREE.Vector3();
+                    if (!isGroundPoundingRef.current) {
+                        const moveDirection = new THREE.Vector3();
+                        const horizontalInput = isMobile ? joystickVector.current.x : (keysRef.current.d ? 1 : 0) - (keysRef.current.a ? 1 : 0);
+                        const verticalInput = isMobile ? joystickVector.current.y : (keysRef.current.s ? 1 : 0) - (keysRef.current.w ? 1 : 0);
+                        moveDirection.set(horizontalInput, 0, verticalInput).normalize();
+                        horizontalMovement.copy(moveDirection.multiplyScalar(PLAYER_SPEED * delta));
+                    }
+
+                    // 3. RESOLVE COLLISIONS AND UPDATE POSITION
+                    const oldPosition = player.position.clone();
+                    const allPlatforms = [...platforms, ...movingPlatforms, ...shrinkingPlatforms, ...bouncePads, ...jumpPads];
+                    const MAX_STEP_HEIGHT = 0.75;
+                    let isGrounded = false;
+
+                    // Apply horizontal movement and resolve horizontal collisions (walls and steps)
+                    player.position.x += horizontalMovement.x;
+                    player.position.z += horizontalMovement.z;
+
                     for (const platform of allPlatforms) {
                         if (!platform.visible) continue;
-                        const halfWidth = (platform.geometry as THREE.BoxGeometry).parameters.width / 2;
-                        const halfDepth = (platform.geometry as THREE.BoxGeometry).parameters.depth / 2;
-                        const platformTopY = platform.position.y + 0.5;
-                        const isHorizontallyAligned = player.position.x > platform.position.x - halfWidth - PLAYER_RADIUS && player.position.x < platform.position.x + halfWidth + PLAYER_RADIUS && player.position.z > platform.position.z - halfDepth - PLAYER_RADIUS && player.position.z < platform.position.z + halfDepth + PLAYER_RADIUS;
-                        const isOnTop = player.position.y >= platformTopY - PLAYER_RADIUS && player.position.y <= platformTopY + PLAYER_RADIUS + 0.1;
-                        if (isHorizontallyAligned && isOnTop && playerVelocityRef.current.y <= 0) {
-                            highestPlatformY = Math.max(highestPlatformY, platformTopY);
-                            if (shrinkingPlatforms.includes(platform as THREE.Mesh) && !platform.userData.isShrinking) { platform.userData.isShrinking = true; platform.userData.shrinkStartTime = elapsedTime; }
-                            if (jumpPads.includes(platform as THREE.Mesh)) { playerVelocityRef.current.y = BASE_JUMP_FORCE * 1.8; playSound('jumpPad'); }
-                            if (bouncePads.includes(platform as THREE.Mesh)) { playerVelocityRef.current.y = BASE_JUMP_FORCE * 2.5; playSound('jumpPad', 0.6, 1.2); }
-                            if (movingPlatforms.includes(platform as THREE.Mesh)) onMovingPlatform = platform;
+                        const platformCollider = new THREE.Box3().setFromObject(platform);
+                        const playerSphere = new THREE.Sphere(player.position, PLAYER_RADIUS);
+
+                        if (platformCollider.intersectsSphere(playerSphere)) {
+                            const platformTopY = platformCollider.max.y;
+                            const playerFootY = oldPosition.y - PLAYER_RADIUS;
+
+                            if (playerFootY < platformTopY) { // Potential wall or step collision
+                                const heightDiff = platformTopY - playerFootY;
+                                if (wasGrounded && heightDiff > 0.01 && heightDiff <= MAX_STEP_HEIGHT) {
+                                    player.position.y = platformTopY + PLAYER_RADIUS;
+                                    playerVelocityRef.current.y = 0;
+                                    isGrounded = true;
+                                    break; 
+                                } else {
+                                    // It's a wall. Push the player out based on penetration depth.
+                                    // FIX: THREE.Sphere does not have a getCenter() method. Use the .center property instead.
+                                    const center = playerSphere.center;
+                                    const closestPoint = platformCollider.clampPoint(center, new THREE.Vector3());
+                                    const penetrationVector = center.clone().sub(closestPoint);
+                                    player.position.add(penetrationVector);
+                                }
+                            }
+                        }
+                        if (isGrounded) break;
+                    }
+
+                    // Apply vertical movement and resolve vertical collisions (ground and ceiling)
+                    player.position.y += playerVelocityRef.current.y * delta;
+                    let highestPlatformY = -Infinity;
+                    let landingPlatform = null;
+                    const playerCollider = new THREE.Box3().setFromObject(player);
+
+                    for (const platform of allPlatforms) {
+                        if (!platform.visible) continue;
+                        const platformCollider = new THREE.Box3().setFromObject(platform);
+                        if (playerCollider.intersectsBox(platformCollider)) {
+                            if (playerVelocityRef.current.y <= 0 && oldPosition.y - PLAYER_RADIUS >= platformCollider.max.y - 0.01) {
+                                if (platformCollider.max.y > highestPlatformY) {
+                                    highestPlatformY = platformCollider.max.y;
+                                    landingPlatform = platform;
+                                }
+                            } else if (playerVelocityRef.current.y > 0 && oldPosition.y + PLAYER_RADIUS <= platformCollider.min.y + 0.01) {
+                                player.position.y = platformCollider.min.y - PLAYER_RADIUS;
+                                playerVelocityRef.current.y = 0;
+                            }
+                        }
+                    }
+
+                    if (landingPlatform) {
+                        player.position.y = highestPlatformY + PLAYER_RADIUS;
+                        const wasGroundPounding = isGroundPoundingRef.current;
+                        
+                        // Universal landing state changes
+                        playerVelocityRef.current.y = 0;
+                        isGrounded = true;
+                        jumpCountRef.current = 0;
+                        
+                        // Always cancel ground pound on landing
+                        if (wasGroundPounding) {
+                            isGroundPoundingRef.current = false;
+                            playSound('groundSlam', 0.8);
+                        }
+                        
+                        // Platform-specific effects
+                        const isJumpPad = jumpPads.includes(landingPlatform);
+                        const isBouncePad = bouncePads.includes(landingPlatform);
+                
+                        if (isJumpPad || isBouncePad) {
+                            playerVelocityRef.current.y = isJumpPad ? BASE_JUMP_FORCE * 1.8 : BASE_JUMP_FORCE * 2.5;
+                            playSound('jumpPad', isBouncePad ? 0.6 : 1.0, isBouncePad ? 1.2 : 1.0);
+                            isGrounded = false; 
+                            jumpCountRef.current = 1; // Consume one jump for the pad
+                        } else { 
+                            // Normal platform or other types
+                            if (wasGroundPounding) {
+                                // Apply shockwave only on non-launching platforms
+                                createShockwave(new THREE.Vector3(player.position.x, player.position.y - PLAYER_RADIUS, player.position.z));
+                                dangers.forEach(d => { if (!d.userData.isDying && d.position.distanceTo(player.position) < 4) { d.userData.isDying = true; d.userData.deathTimer = 0.5; } });
+                            }
+                            
+                            if (shrinkingPlatforms.includes(landingPlatform) && !landingPlatform.userData.isShrinking) {
+                                landingPlatform.userData.isShrinking = true; 
+                                landingPlatform.userData.shrinkStartTime = elapsedTime;
+                            }
+                            if (movingPlatforms.includes(landingPlatform)) {
+                                player.position.add(landingPlatform.userData.velocity.clone().multiplyScalar(delta));
+                            }
                         }
                     }
                     
-                    if (player.position.y - PLAYER_RADIUS < highestPlatformY && playerVelocityRef.current.y <= 0) {
-                        isGrounded = true; player.position.y = highestPlatformY + PLAYER_RADIUS;
-                        playerVelocityRef.current.y = 0; jumpCountRef.current = 0;
-                        if (onMovingPlatform) player.position.add(onMovingPlatform.userData.velocity.clone().multiplyScalar(delta));
+                    if (isGrounded) jumpCountRef.current = 0;
+
+                    // 4. UPDATE PLAYER ROTATION based on actual movement
+                    const actualMovement = player.position.clone().sub(oldPosition);
+                    const distanceMoved = new THREE.Vector3(actualMovement.x, 0, actualMovement.z).length();
+                    if (distanceMoved > 0.001) {
+                        const rotationAxis = new THREE.Vector3(actualMovement.z, 0, -actualMovement.x).normalize();
+                        const rotationAngle = distanceMoved / PLAYER_RADIUS;
+                        player.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(rotationAxis, rotationAngle));
                     }
-
-                    if (isGrounded && !wasGrounded && isGroundPoundingRef.current) { isGroundPoundingRef.current = false; playSound('groundSlam', 0.8); createShockwave(new THREE.Vector3(player.position.x, player.position.y - PLAYER_RADIUS, player.position.z)); dangers.forEach(d => { if (!d.userData.isDying && d.position.distanceTo(player.position) < 4) { d.userData.isDying = true; d.userData.deathTimer = 0.5; } }); }
-
-                    if (!isGroundPoundingRef.current) { const moveDirection = new THREE.Vector3(); const horizontalInput = isMobile ? joystickVector.current.x : (keysRef.current.d ? 1 : 0) - (keysRef.current.a ? 1 : 0); const verticalInput = isMobile ? joystickVector.current.y : (keysRef.current.s ? 1 : 0) - (keysRef.current.w ? 1 : 0); moveDirection.set(horizontalInput, 0, verticalInput).normalize(); const horizontalMovement = moveDirection.multiplyScalar(PLAYER_SPEED * delta); const distanceMoved = new THREE.Vector3(horizontalMovement.x, 0, horizontalMovement.z).length(); if (distanceMoved > 0.001) { const rotationAxis = new THREE.Vector3(horizontalMovement.z, 0, -horizontalMovement.x).normalize(); const rotationAngle = distanceMoved / PLAYER_RADIUS; player.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(rotationAxis, rotationAngle)); } player.position.add(horizontalMovement); }
-                    
-                    playerVelocityRef.current.y -= 9.8 * delta; player.position.y += playerVelocityRef.current.y * delta;
-                    
-                    if ((keysRef.current.c || keysRef.current.shift) && !isGrounded && upgrades.groundPound && !isGroundPoundingRef.current) { isGroundPoundingRef.current = true; playerVelocityRef.current.y = -25; }
-
-                    if (keysRef.current.space && !spacePressedSinceGrounded.current && !isGroundPoundingRef.current) { let jumped = false; if (isGrounded) { playerVelocityRef.current.y = JUMP_FORCE; jumpCountRef.current = 1; jumped = true; } else if (jumpCountRef.current === 1 && upgrades.doubleJump) { playerVelocityRef.current.y = JUMP_FORCE; jumpCountRef.current = 2; jumped = true; } else if (jumpCountRef.current === 2 && upgrades.tripleJump) { playerVelocityRef.current.y = JUMP_FORCE; jumpCountRef.current = 3; jumped = true; } if (jumped) { playSound('jump', 0.5, 1.0); spacePressedSinceGrounded.current = true; } }
-                    if(!keysRef.current.space) spacePressedSinceGrounded.current = false;
+                    // --- END OF REFACTOR ---
 
                     let damageDetectedThisFrame = false;
                     apples.forEach((a) => { if (a.visible && player.position.distanceTo(a.position) < 1.2) { a.visible = false; setScore(s => (s < levelData.numApples ? s + 1 : s)); playSound('collectApple', 0.5, 1.5); } });
                     for (let i = hearts3D.length - 1; i >= 0; i--) { const h = hearts3D[i]; if (player.position.distanceTo(h.position) < 1.2) { scene.remove(h); initialItemY.delete(h); hearts3D.splice(i, 1); setLives(l => Math.min(l + 1, upgrades.maxLives)); playSound('collectHeart'); } }
                     
-                    for (let i = dangers.length - 1; i >= 0; i--) { const d = dangers[i]; if (d.userData.isDying) continue; if (player.position.distanceTo(d.position) < 1.0) { if (playerVelocityRef.current.y < -0.1 && (player.position.y - PLAYER_RADIUS > d.position.y - 0.2) && !isGroundPoundingRef.current) { playSound('enemyStomp'); d.userData.isDying = true; d.userData.deathTimer = 0.5; playerVelocityRef.current.y = JUMP_FORCE * 0.8; } else if (invulnerabilityTimerRef.current <= 0) { damageDetectedThisFrame = true; } } }
+                    for (let i = dangers.length - 1; i >= 0; i--) {
+                        const d = dangers[i];
+                        if (d.userData.isDying) continue;
+                        if (player.position.distanceTo(d.position) < 1.0) {
+                            const isNormalStomp = playerVelocityRef.current.y < -0.1 && (player.position.y - PLAYER_RADIUS > d.position.y - 0.2);
+                            const isGroundPoundAttack = isGroundPoundingRef.current && playerVelocityRef.current.y < -0.1;
+
+                            if (isNormalStomp || isGroundPoundAttack) {
+                                playSound('enemyStomp');
+                                d.userData.isDying = true;
+                                d.userData.deathTimer = 0.5;
+                                playerVelocityRef.current.y = JUMP_FORCE * 0.8;
+                                if (isGroundPoundingRef.current) {
+                                    isGroundPoundingRef.current = false;
+                                }
+                            } else if (invulnerabilityTimerRef.current <= 0) {
+                                damageDetectedThisFrame = true;
+                            }
+                        }
+                    }
 
                     if (invulnerabilityTimerRef.current <= 0) {
                         stompers.forEach(s => { const box = new THREE.Box3().setFromObject(s); if (box.containsPoint(player.position)) damageDetectedThisFrame = true; });
                         ghosts.forEach(g => { if (player.position.distanceTo(g.position) < 1.0) damageDetectedThisFrame = true; });
                         spikeBlocks.forEach(s => { if (player.position.distanceTo(s.position) < 1.2) damageDetectedThisFrame = true; });
-                        ramBots.forEach(r => { if(r.userData.state === 'charging' && player.position.distanceTo(r.position) < 1.2) damageDetectedThisFrame = true; });
+                        ramBots.forEach(r => { if(player.position.distanceTo(r.position) < 1.2) damageDetectedThisFrame = true; });
                         projectiles.forEach(p => { if (player.position.distanceTo(p.position) < PLAYER_RADIUS + 0.2) { damageDetectedThisFrame = true; p.userData.shouldBeRemoved = true; } });
                         bossAttacks.forEach(attack => { if (attack instanceof THREE.Mesh) { const attackPos = attack.position; if (attack.userData.isBossAttack && attack.userData.isShockwave) { const dist = player.position.distanceTo(new THREE.Vector3(attackPos.x, player.position.y, attackPos.z)); const currentRadius = attack.scale.x; const waveThickness = 1.5; if (Math.abs(dist - currentRadius) < waveThickness / 2 + PLAYER_RADIUS) { damageDetectedThisFrame = true; } } else if (attack.userData.isBossAttack && player.position.distanceTo(attackPos) < 1) { damageDetectedThisFrame = true; bossAttacks.delete(attack); scene.remove(attack); } } });
                         lasers.forEach(l => { const beam = l.getObjectByName('laserBeam'); if (beam instanceof THREE.Mesh && beam.visible) { const BEAM_RADIUS = (beam.geometry as THREE.CylinderGeometry).parameters.radiusTop; const BEAM_HEIGHT = (beam.geometry as THREE.CylinderGeometry).parameters.height; const p1Local = new THREE.Vector3(0, 0, -BEAM_HEIGHT / 2); const p2Local = new THREE.Vector3(0, 0, BEAM_HEIGHT / 2); beam.updateWorldMatrix(true, false); const p1World = p1Local.clone().applyMatrix4(beam.matrixWorld); const p2World = p2Local.clone().applyMatrix4(beam.matrixWorld); const segmentVector = new THREE.Vector3().subVectors(p2World, p1World); const playerToP1 = new THREE.Vector3().subVectors(player.position, p1World); const segmentLengthSq = segmentVector.lengthSq(); let t = 0; if (segmentLengthSq > 0) { t = Math.max(0, Math.min(1, playerToP1.dot(segmentVector) / segmentLengthSq)); } const closestPointOnSegment = p1World.clone().add(segmentVector.multiplyScalar(t)); if (player.position.distanceToSquared(closestPointOnSegment) < (PLAYER_RADIUS + BEAM_RADIUS) ** 2) { damageDetectedThisFrame = true; } } });
@@ -530,8 +668,19 @@ export const Game: React.FC<GameProps> = ({ upgrades, characterId, onSessionEnd,
                 });
 
                 for (let i = dangers.length - 1; i >= 0; i--) { const d = dangers[i]; if (d.userData.isDying) { d.userData.deathTimer -= delta; const s = Math.max(0, d.userData.deathTimer / 0.5); d.scale.set(s, s, s); if (d.userData.deathTimer <= 0) { scene.remove(d); dangers.splice(i, 1); } } else { d.rotation.y += 0.5 * delta; if (d.userData.initialPosition) { const { initialPosition, patrolAxis, patrolDistance, patrolSpeed } = d.userData; (d.position as any)[patrolAxis] = initialPosition[patrolAxis] + Math.sin(elapsedTime * patrolSpeed) * patrolDistance; } } }
-                stompers.forEach(s => { const { floorY, speed } = s.userData; s.position.y = floorY + 10 + Math.sin(elapsedTime * speed) * 8; });
-                ghosts.forEach(g => { const dist = player.position.distanceTo(g.position); if (!g.userData.isChasing && dist < g.userData.activationRadius) g.userData.isChasing = true; if (g.userData.isChasing) { const direction = player.position.clone().sub(g.position).normalize(); g.position.add(direction.multiplyScalar(g.userData.chaseSpeed * delta)); } g.position.y = g.userData.initialY + Math.sin(elapsedTime * 2) * 0.5; });
+                stompers.forEach(s => { const { floorY, speed } = s.userData; s.position.y = floorY + 8.5 + Math.sin(elapsedTime * speed) * 8; });
+                ghosts.forEach(g => {
+                    const dist = player.position.distanceTo(g.position);
+                    if (!g.userData.isChasing && dist < g.userData.activationRadius) {
+                        g.userData.isChasing = true;
+                    }
+                    if (g.userData.isChasing) {
+                        const direction = player.position.clone().sub(g.position).normalize();
+                        g.position.add(direction.multiplyScalar(g.userData.chaseSpeed * delta));
+                    } else {
+                        g.position.y = g.userData.initialY + Math.sin(elapsedTime * 2) * 0.5;
+                    }
+                });
                 movingPlatforms.forEach(p => { const { initialPosition, moveAxis, moveRange, moveSpeed } = p.userData; const newPos = p.position.clone(); newPos[moveAxis] = initialPosition[moveAxis] + Math.sin(elapsedTime * moveSpeed) * moveRange; p.position.copy(newPos); p.userData.velocity.copy(p.position).sub(p.userData.lastPosition).divideScalar(delta); p.userData.lastPosition.copy(p.position); });
                 shrinkingPlatforms.forEach(p => { if (p.userData.isShrinking) { const progress = Math.min((elapsedTime - p.userData.shrinkStartTime) / p.userData.shrinkDuration, 1.0); p.scale.set(1 - progress, 1, 1 - progress); if (progress >= 1.0) p.visible = false; } });
                 lasers.forEach(l => { const { type, speed, initialPosition, range } = l.userData; if (type === 'rotating') l.rotation.y = elapsedTime * speed; else l.position.x = initialPosition.x + Math.sin(elapsedTime * speed) * range; });
@@ -606,7 +755,7 @@ export const Game: React.FC<GameProps> = ({ upgrades, characterId, onSessionEnd,
                         </div>
                         {!isBossLevelRef.current && <div className="text-right pointer-events-none"><h2 className="text-lg sm:text-xl md:text-2xl font-bold bg-black bg-opacity-50 px-3 py-1 sm:px-4 sm:py-2 rounded-lg">{t('apples')}: {score} / {numApples}</h2></div>}
                     </div>
-                    {isMobile && <MobileControls keysRef={keysRef} joystickVector={joystickVector} t={t} />}
+                    {isMobile && <MobileControls keysRef={keysRef} joystickVector={joystickVector} t={t} upgrades={upgrades} />}
                  </>
             )}
             {isPaused && (
@@ -615,6 +764,9 @@ export const Game: React.FC<GameProps> = ({ upgrades, characterId, onSessionEnd,
                     <div className="flex flex-col gap-4 w-64">
                         <button onClick={handleResume} className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-8 text-xl rounded-lg shadow-lg transition-transform transform hover:scale-105">
                             {t('resume')}
+                        </button>
+                        <button onClick={handleRestart} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 text-xl rounded-lg shadow-lg transition-transform transform hover:scale-105">
+                            {t('restart')}
                         </button>
                         <button onClick={handleGiveUp} className="bg-red-700 hover:bg-red-800 text-white font-bold py-3 px-8 text-xl rounded-lg shadow-lg transition-transform transform hover:scale-105">
                             {t('giveUp')}

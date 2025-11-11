@@ -1,12 +1,14 @@
 import React, { useRef, useEffect, useCallback } from 'react';
+import { Upgrades } from '../../types';
 
 interface MobileControlsProps {
     keysRef: React.MutableRefObject<any>;
     joystickVector: React.MutableRefObject<{ x: number, y: number }>;
     t: (key: string) => string;
+    upgrades: Upgrades;
 }
 
-export const MobileControls: React.FC<MobileControlsProps> = ({ keysRef, joystickVector, t }) => {
+export const MobileControls: React.FC<MobileControlsProps> = ({ keysRef, joystickVector, t, upgrades }) => {
     const joystickRef = useRef<HTMLDivElement>(null);
     const knobRef = useRef<HTMLDivElement>(null);
 
@@ -28,7 +30,13 @@ export const MobileControls: React.FC<MobileControlsProps> = ({ keysRef, joystic
         const deadzone = 10;
         if (distance > deadzone) {
             joystickVector.current.x = (Math.cos(angle) * distance) / maxDist;
-            joystickVector.current.y = -(Math.sin(angle) * distance) / maxDist;
+            // O jogador reportou que o movimento vertical estava invertido.
+            // Empurrar para cima no joystick deve resultar em um valor Y negativo para mover para frente.
+            // O código original `-(Math.sin(angle) * distance) / maxDist` causava a inversão.
+            // Empurrar para cima resulta em um touchY negativo, que dá um sin(angle) negativo.
+            // -(-ve) = +ve, que era o movimento para trás.
+            // Esta é a lógica corrigida:
+            joystickVector.current.y = (Math.sin(angle) * distance) / maxDist;
         } else {
             joystickVector.current.x = 0;
             joystickVector.current.y = 0;
@@ -68,11 +76,13 @@ export const MobileControls: React.FC<MobileControlsProps> = ({ keysRef, joystic
             <div ref={joystickRef} className="absolute bottom-5 left-5 sm:bottom-8 sm:left-8 w-32 h-32 sm:w-40 sm:h-40 bg-black bg-opacity-30 rounded-full flex items-center justify-center select-none">
                 <div ref={knobRef} className="w-14 h-14 sm:w-16 sm:h-16 bg-white bg-opacity-30 rounded-full transition-transform"></div>
             </div>
-             <div className="absolute bottom-40 right-5 sm:bottom-48 sm:right-8 w-20 h-20 sm:w-24 sm:h-24 bg-red-600 bg-opacity-50 rounded-full flex items-center justify-center select-none" onTouchStart={handlePoundPress} onTouchEnd={handlePoundRelease} onMouseDown={handlePoundPress} onMouseUp={handlePoundRelease} onMouseLeave={handlePoundRelease}>
-                <span className="text-white text-3xl font-bold pointer-events-none">⇓</span>
-            </div>
-            <div className="absolute bottom-5 right-5 sm:bottom-8 sm:right-8 w-24 h-24 sm:w-28 sm:h-28 bg-blue-500 bg-opacity-50 rounded-full flex items-center justify-center select-none" onTouchStart={handleJumpPress} onTouchEnd={handleJumpRelease} onMouseDown={handleJumpPress} onMouseUp={handleJumpRelease} onMouseLeave={handleJumpRelease}>
-                <span className="text-white text-lg font-bold pointer-events-none">{t('jump')}</span>
+             {upgrades.groundPound && (
+                <div className="absolute bottom-40 right-5 sm:bottom-48 sm:right-8 w-20 h-20 sm:w-24 sm:h-24 bg-red-600 bg-opacity-50 rounded-full flex items-center justify-center select-none" onTouchStart={handlePoundPress} onTouchEnd={handlePoundRelease} onMouseDown={handlePoundPress} onMouseUp={handlePoundRelease} onMouseLeave={handlePoundRelease}>
+                    <span className="text-white text-3xl font-bold pointer-events-none">⇓</span>
+                </div>
+            )}
+            <div className="absolute bottom-5 right-5 sm:bottom-8 sm:right-8 w-24 h-24 sm:w-28 sm:h-28 bg-blue-500 bg-opacity-50 rounded-full flex items-center justify-center select-none" onTouchStart={handleJumpPress} onTouchEnd={handleJumpRelease} onMouseDown={handleJumpPress} onMouseUp={handleJumpRelease} onMouseLeave={handlePoundRelease}>
+                <span className="text-white text-5xl font-bold pointer-events-none">↑</span>
             </div>
         </>
     );
